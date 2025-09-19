@@ -2,11 +2,13 @@ require("dotenv").config();
 const express = require("express");
 const { Pool } = require("pg");
 const cors = require("cors");
+const axios = require("axios");
 
 const app = express();
 
 const corsOptions = {
     origin: "https://ashyq.data.gov.kz",
+    origin: "http://localhost:6108",
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   };
@@ -89,6 +91,77 @@ app.post("/insert-json", checkAuth, async (req, res) => {
     } catch (error) {
         console.error("Bulk insert error:", error);
         res.status(500).json({ error: "Failed to insert logs into database" });
+    }
+});
+
+app.get("/api/datasets", async (req, res) => {
+    try {
+        const statsResult = await pool.query(`
+            WITH ranked_datasets AS (
+                SELECT 
+                    dataset_id,
+                    COUNT(*) FILTER (WHERE event_type = 'view') AS views,
+                    COUNT(*) FILTER (WHERE event_type = 'download') AS downloads,
+                    -- Popularity score: 60% downloads, 40% views
+                    (COUNT(*) FILTER (WHERE event_type = 'view')) * 0.4 + (COUNT(*) FILTER (WHERE event_type = 'download')) * 0.6 AS popularity_score
+                FROM dataset_logs
+                GROUP BY dataset_id
+            )
+            SELECT * FROM ranked_datasets
+            ORDER BY popularity_score DESC
+            LIMIT 20;
+        `);
+
+        if (statsResult.rows.length === 0) {
+            return res.json([]);
+        }
+
+        const potentialDatasets = statsResult.rows;
+        const enrichedDatasets = [];
+
+        const topDatasetsStats = statsResult.rows;
+        // Step 2: Iterate and fetch metadata until we have 6 valid datasets
+        for (const stat of potentialDatasets) {
+
+            if (enrichedDatasets.length >= 6) {
+                break;
+            }
+
+            try {
+                const magdaUrl = `https://ashyq.data.gov.kz/api/v0/registry/records/${stat.dataset_id}/aspects/dcat-dataset-strings`
+                const response = await axios.get(magdaUrl);
+                const metadata = response.data;
+
+                // Function to create a short description preview
+                const createPreview = (desc) => {
+                    if (!desc) return "Нет описания.";
+                    // Split by newlines, filter out empty lines, and join the first two.
+                    const sentences = desc.split('\\n').filter(line => line.trim() !== '');
+                    return sentences.slice(0, 2).join(' ') || "Нет описания.";
+                };
+
+                enrichedDatasets.push({
+                    id: stat.dataset_id,
+                    views: parseInt(stat.views, 10) || 0,
+                    downloads: parseInt(stat.downloads, 10) || 0,
+                    title: metadata.title || "Без названия",
+                    publisher: metadata.publisher || "Неизвестный издатель",
+                    description: createPreview(metadata.description),
+                });
+            } catch (error) {
+                if (error.response && (error.response.status === 404 || error.response.status === 400)) {
+                    console.warn(`Dataset ${stat.dataset_id} not found in Magda. Skipping.`);
+                } else {
+                    console.error(`An error occurred while fetching metadata for ${stat.dataset_id}:`, error.message);
+                }
+            }
+        }
+
+        res.json(enrichedDatasets);
+
+    } catch (err) {
+        console.error("Error fetching dataset stats:", err);
+        res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
