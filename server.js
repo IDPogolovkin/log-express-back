@@ -8,7 +8,7 @@ const app = express();
 
 const corsOptions = {
     origin: "https://ashyq.data.gov.kz",
-    origin: "http://localhost:6108",
+    // origin: "http://localhost:6108",
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   };
@@ -128,7 +128,7 @@ app.get("/api/datasets", async (req, res) => {
             }
 
             try {
-                const magdaUrl = `https://ashyq.data.gov.kz/api/v0/registry/records/${stat.dataset_id}/aspects/dcat-dataset-strings`
+                const magdaUrl = `http://web.magda.svc.cluster.local:80/api/v0/registry/records/${stat.dataset_id}/aspects/dcat-dataset-strings`
                 const response = await axios.get(magdaUrl);
                 const metadata = response.data;
 
